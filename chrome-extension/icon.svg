@@ -1,0 +1,19 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background -->
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#0F172A"/>
+
+  <!-- bookmark -->
+  <path d="M44 32 L84 32 L84 92 L64 76 L44 92 Z"
+        fill="url(#grad)"/>
+
+  <!-- lightning (force/read now) -->
+  <path d="M70 46 L56 70 L66 70 L60 88 L78 60 L66 60 Z"
+        fill="#FFFFFF"/>
+</svg>

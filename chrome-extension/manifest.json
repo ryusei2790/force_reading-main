@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Blog-Read-Forced",
+  "version": "1.0.0",
+  "description": "保存した記事を毎日12時に通知して強制的に読む習慣を作るツール",
+  "permissions": [
+    "alarms",
+    "notifications",
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
