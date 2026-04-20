@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Blog-Read-Forced",
   "version": "1.0.0",
-  "description": "保存した記事を毎日12時に通知して強制的に読む習慣を作るツール",
+  "description": "保存した記事を定期的に通知して強制的に読む習慣を作るツール。通知間隔はカスタマイズ可能（デフォルト1時間）",
   "permissions": [
     "alarms",
     "notifications",
