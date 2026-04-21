@@ -7,7 +7,10 @@
  */
 
 /** @type {string} ストレージキー: GAS WebアプリURL */
-const STORAGE_KEY_GAS_URL = "gasUrl"; 
+const STORAGE_KEY_GAS_URL = "gasUrl";
+
+/** @type {string} ストレージキー: 通知間隔（分） */
+const STORAGE_KEY_INTERVAL = "notifyIntervalMinutes";
 
 /** @type {HTMLInputElement} */
 const gasUrlInput = /** @type {HTMLInputElement} */ (document.getElementById("gas-url-input"));
@@ -29,6 +32,9 @@ const articleTitle = /** @type {HTMLAnchorElement} */ (document.getElementById("
 
 /** @type {HTMLElement} */
 const articleEmpty = /** @type {HTMLElement} */ (document.getElementById("article-empty"));
+
+/** @type {HTMLSelectElement} */
+const intervalSelect = /** @type {HTMLSelectElement} */ (document.getElementById("interval-select"));
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -79,15 +85,20 @@ async function loadOldestArticle(gasUrl) {
 }
 
 /**
- * ポップアップ表示時に保存済み GAS URL をインプットに反映し、未読記事を取得する。
+ * ポップアップ表示時に保存済みの設定を反映し、未読記事を取得する。
  */
 async function init() {
-  const result = await chrome.storage.local.get(STORAGE_KEY_GAS_URL);
+  const result = await chrome.storage.local.get([STORAGE_KEY_GAS_URL, STORAGE_KEY_INTERVAL]);
   const gasUrl = result[STORAGE_KEY_GAS_URL];
+  const interval = result[STORAGE_KEY_INTERVAL];
+
   if (gasUrl) {
     gasUrlInput.value = gasUrl;
     await loadOldestArticle(gasUrl);
   }
+
+  // 保存済みの通知間隔をセレクトボックスに反映（未設定時はデフォルト60分）
+  intervalSelect.value = String(interval || 60);
 }
 
 // ── イベントハンドラ ─────────────────────────────────────
@@ -113,6 +124,17 @@ saveUrlBtn.addEventListener("click", async () => {
   } finally {
     setDisabled(saveUrlBtn, false);
   }
+});
+
+/**
+ * 通知間隔セレクトボックスの変更ハンドラ。
+ * 選択値を chrome.storage.local に保存する。
+ * background.js が storage.onChanged で検知してアラームを再登録する。
+ */
+intervalSelect.addEventListener("change", async () => {
+  const minutes = Number(intervalSelect.value);
+  await chrome.storage.local.set({ [STORAGE_KEY_INTERVAL]: minutes });
+  showMessage(`通知間隔を変更しました`, "success");
 });
 
 /**

@@ -54,6 +54,21 @@
       border-color: #4285f4;
     }
 
+    #interval-select {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 13px;
+      background: #fff;
+      outline: none;
+      cursor: pointer;
+    }
+
+    #interval-select:focus {
+      border-color: #4285f4;
+    }
+
     /* ボタン共通 */
     button {
       width: 100%;
@@ -156,6 +171,18 @@
       />
       <br /><br />
       <button id="save-url-btn">URL を保存</button>
+    </div>
+
+    <!-- 通知間隔設定 -->
+    <div>
+      <div class="section-label">通知間隔</div>
+      <select id="interval-select">
+        <option value="60">1時間ごと</option>
+        <option value="180">3時間ごと</option>
+        <option value="360">6時間ごと</option>
+        <option value="720">12時間ごと</option>
+        <option value="1440">24時間ごと</option>
+      </select>
     </div>
 
     <hr />

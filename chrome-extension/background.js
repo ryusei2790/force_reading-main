@@ -1,7 +1,8 @@
 /**
  * Blog-Read-Forced — Service Worker (background.js)
  *
- * 毎日12:00に未読記事をランダム取得してデスクトップ通知を表示する。
+ * 設定された間隔（デフォルト60分）で未読記事を登録日が古い順で取得し、
+ * デスクトップにポップアップ通知を表示する。
  * 通知クリック時に記事URLを新しいタブで開く。
  */
 
@@ -10,6 +11,12 @@ const ALARM_NAME = "daily-article";
 
 /** @type {string} ストレージキー: GAS WebアプリURL */
 const STORAGE_KEY_GAS_URL = "gasUrl";
+
+/** @type {string} ストレージキー: 通知間隔（分） */
+const STORAGE_KEY_INTERVAL = "notifyIntervalMinutes";
+
+/** @type {number} デフォルトの通知間隔（分） */
+const DEFAULT_INTERVAL_MINUTES = 60;
 
 /** @type {string} 通知IDのプレフィックス */
 const NOTIFICATION_ID = "blog-read-forced";
@@ -22,6 +29,31 @@ const NOTIFICATION_ID = "blog-read-forced";
 async function getGasUrl() {
   const result = await chrome.storage.local.get(STORAGE_KEY_GAS_URL);
   return result[STORAGE_KEY_GAS_URL] || null;
+}
+
+/**
+ * chrome.storage.local から通知間隔（分）を取得する。
+ *
+ * @returns {Promise<number>} 通知間隔（分）。未設定の場合はデフォルト値
+ */
+async function getIntervalMinutes() {
+  const result = await chrome.storage.local.get(STORAGE_KEY_INTERVAL);
+  return result[STORAGE_KEY_INTERVAL] || DEFAULT_INTERVAL_MINUTES;
+}
+
+/**
+ * 指定した間隔でアラームを（再）登録する。
+ * 既存のアラームがあれば削除してから作り直す。
+ *
+ * @param {number} intervalMinutes - 通知間隔（分）
+ */
+async function registerAlarm(intervalMinutes) {
+  await chrome.alarms.clear(ALARM_NAME);
+  chrome.alarms.create(ALARM_NAME, {
+    delayInMinutes: 1,
+    periodInMinutes: intervalMinutes,
+  });
+  console.info(`[Blog-Read-Forced] 通知間隔を ${intervalMinutes} 分に設定しました。`);
 }
 
 /**
@@ -90,16 +122,22 @@ async function onAlarm() {
 
 /**
  * 拡張インストール / アップデート時にアラームを登録する。
- * periodInMinutes: 1440 = 24時間ごとに発火。
+ * ユーザーが設定した間隔（デフォルト60分）で通知を繰り返す。
  */
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create(ALARM_NAME, {
-    delayInMinutes: 1,
-    periodInMinutes: 180, // 3時間ごと
-  });
-  console.info("[Blog-Read-Forced] 3時間ごとに通知します。");
+chrome.runtime.onInstalled.addListener(async () => {
+  const interval = await getIntervalMinutes();
+  await registerAlarm(interval);
 });
 
+/**
+ * ポップアップから通知間隔が変更されたときにアラームを再登録する。
+ */
+chrome.storage.onChanged.addListener(async (changes, area) => {
+  if (area === "local" && changes[STORAGE_KEY_INTERVAL]) {
+    const newInterval = changes[STORAGE_KEY_INTERVAL].newValue || DEFAULT_INTERVAL_MINUTES;
+    await registerAlarm(newInterval);
+  }
+});
 /**
  * アラーム発火時のリスナー。
  */
@@ -135,19 +173,3 @@ chrome.notifications.onClicked.addListener(async (notificationId) => {
   }
 });
 
-// ── ユーティリティ ────────────────────────────────────────
-
-/**
- * 次の12:00 (正午) の Unix タイムスタンプ (ms) を返す。
- * 現在時刻がすでに12:00を過ぎていれば翌日の12:00を返す。
- *
- * @returns {number}
- */
-function getNextNoonTimestamp() {
-  const now = new Date();
-  const noon = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
-  if (noon <= now) {
-    noon.setDate(noon.getDate() + 1);
-  }
-  return noon.getTime();
-}
