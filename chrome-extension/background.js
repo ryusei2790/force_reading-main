@@ -21,6 +21,18 @@ const DEFAULT_INTERVAL_MINUTES = 60;
 /** @type {string} 通知IDのプレフィックス */
 const NOTIFICATION_ID = "blog-read-forced";
 
+/** @type {string} 警告通知用のID */
+const WARNING_NOTIFICATION_ID = "blog-read-forced-warning";
+
+/** @type {string} ストレージキー: 最終通知日時 */
+const STORAGE_KEY_LAST_NOTIFIED = "lastNotifiedAt";
+
+/** @type {string} ストレージキー: GAS URL未設定の警告済みフラグ */
+const STORAGE_KEY_WARNED_NO_URL = "warnedNoUrl";
+
+/** @type {string} テスト通知用のID（既読処理をスキップするため分離） */
+const TEST_NOTIFICATION_ID = "blog-read-forced-test";
+
 /**
  * chrome.storage.local から GAS の URL を取得する。
  *
@@ -71,7 +83,7 @@ async function fetchRandomArticle(gasUrl) {
 }
 
 /**
- * デスクトップ通知を表示する。
+ * デスクトップ通知を表示し、最終通知日時を記録する。
  * 通知クリック時に開けるよう articleUrl を保持する。
  *
  * @param {string} title - 通知に表示する記事タイトル
@@ -79,15 +91,36 @@ async function fetchRandomArticle(gasUrl) {
  */
 function showNotification(title, articleUrl) {
   // クリック時に URL を参照できるよう storage に保存
-  chrome.storage.local.set({ pendingArticleUrl: articleUrl });
+  chrome.storage.local.set({
+    pendingArticleUrl: articleUrl,
+    [STORAGE_KEY_LAST_NOTIFIED]: new Date().toISOString(),
+  });
+
+  // 記事タイトルを通知タイトルに使用（40文字で省略）
+  const displayTitle = title.length > 40 ? title.slice(0, 40) + "…" : title;
 
   chrome.notifications.create(NOTIFICATION_ID, {
     type: "basic",
     iconUrl: "icon128.png",
-    title: "今日の記事",
-    message: title,
+    title: displayTitle,
+    message: "Blog-Read-Forced",
     contextMessage: "クリックして読む",
     requireInteraction: true,
+  });
+}
+
+/**
+ * 警告用のデスクトップ通知を表示する。
+ *
+ * @param {string} title - 警告タイトル
+ * @param {string} message - 警告メッセージ
+ */
+function showWarningNotification(title, message) {
+  chrome.notifications.create(WARNING_NOTIFICATION_ID, {
+    type: "basic",
+    iconUrl: "icon128.png",
+    title,
+    message,
   });
 }
 
@@ -98,7 +131,17 @@ function showNotification(title, articleUrl) {
 async function onAlarm() {
   const gasUrl = await getGasUrl();
   if (!gasUrl) {
-    console.warn("[Blog-Read-Forced] GAS URL が設定されていません。popup から設定してください。");
+    // 初回のみ警告通知を表示し、以降はログのみ
+    const { [STORAGE_KEY_WARNED_NO_URL]: alreadyWarned } =
+      await chrome.storage.local.get(STORAGE_KEY_WARNED_NO_URL);
+    if (!alreadyWarned) {
+      showWarningNotification(
+        "設定が必要です",
+        "GAS URL が未設定です。拡張アイコンをクリックして設定してください。"
+      );
+      await chrome.storage.local.set({ [STORAGE_KEY_WARNED_NO_URL]: true });
+    }
+    console.warn("[Blog-Read-Forced] GAS URL が設定されていません。");
     return;
   }
 
@@ -115,6 +158,10 @@ async function onAlarm() {
     }
   } catch (err) {
     console.error("[Blog-Read-Forced] 記事取得に失敗しました:", err);
+    showWarningNotification(
+      "記事取得に失敗",
+      "GAS への接続に失敗しました。URLが正しいか、ネットワークを確認してください。"
+    );
   }
 }
 
@@ -133,9 +180,16 @@ chrome.runtime.onInstalled.addListener(async () => {
  * ポップアップから通知間隔が変更されたときにアラームを再登録する。
  */
 chrome.storage.onChanged.addListener(async (changes, area) => {
-  if (area === "local" && changes[STORAGE_KEY_INTERVAL]) {
+  if (area !== "local") return;
+
+  if (changes[STORAGE_KEY_INTERVAL]) {
     const newInterval = changes[STORAGE_KEY_INTERVAL].newValue || DEFAULT_INTERVAL_MINUTES;
     await registerAlarm(newInterval);
+  }
+
+  // GAS URL が設定されたら警告フラグをリセット
+  if (changes[STORAGE_KEY_GAS_URL] && changes[STORAGE_KEY_GAS_URL].newValue) {
+    await chrome.storage.local.remove(STORAGE_KEY_WARNED_NO_URL);
   }
 });
 /**
@@ -145,6 +199,46 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
     onAlarm();
   }
+});
+
+/**
+ * ポップアップからの「テスト通知」リクエストを処理する。
+ * GAS から未読記事を取得し、テスト通知を表示する（既読にはしない）。
+ */
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type !== "testNotification") return false;
+
+  (async () => {
+    const gasUrl = await getGasUrl();
+    if (!gasUrl) {
+      sendResponse({ success: false, error: "GAS URL が設定されていません" });
+      return;
+    }
+
+    try {
+      const data = await fetchRandomArticle(gasUrl);
+      if (data.status === "empty") {
+        sendResponse({ success: false, error: "未読記事がありません" });
+        return;
+      }
+
+      if (data.status === "ok" && data.url) {
+        chrome.notifications.create(TEST_NOTIFICATION_ID, {
+          type: "basic",
+          iconUrl: "icon128.png",
+          title: "テスト通知",
+          message: data.title || data.url,
+          contextMessage: "これはテスト通知です（既読になりません）",
+        });
+        sendResponse({ success: true });
+      }
+    } catch (err) {
+      sendResponse({ success: false, error: "GAS への接続に失敗しました" });
+    }
+  })();
+
+  // 非同期レスポンスのため true を返す
+  return true;
 });
 
 /**
