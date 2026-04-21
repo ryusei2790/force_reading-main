@@ -11,6 +11,12 @@
 /** @type {string} スプレッドシートのシート名 */
 const SHEET_NAME = "articles";
 
+/** @type {string} LINE Messaging API のブロードキャスト送信エンドポイント */
+const LINE_BROADCAST_URL = "https://api.line.me/v2/bot/message/broadcast";
+
+/** @type {string} GAS トリガーで呼び出す関数名 */
+const LINE_TRIGGER_FUNCTION = "notifyLineArticle";
+
 /**
  * アクティブなスプレッドシートの対象シートを返す。
  * シートが存在しない場合は新規作成する。
@@ -130,4 +136,122 @@ function doGet(_e) {
   } catch (err) {
     return jsonResponse({ status: "error", message: err.message });
   }
+}
+
+// ── LINE 通知機能 ─────────────────────────────────────────
+
+/**
+ * スクリプトプロパティから LINE チャネルアクセストークンを取得する。
+ *
+ * @returns {string|null} トークン。未設定の場合は null
+ */
+function getLineToken() {
+  return PropertiesService.getScriptProperties().getProperty("LINE_CHANNEL_ACCESS_TOKEN");
+}
+
+/**
+ * LINE Messaging API の broadcast で全友だちにテキストメッセージを送信する。
+ *
+ * @param {string} text - 送信するメッセージ本文
+ * @returns {{ ok: boolean, status: number }} 送信結果
+ */
+function sendLineMessage(text) {
+  const token = getLineToken();
+  if (!token) {
+    console.error("[LINE] LINE_CHANNEL_ACCESS_TOKEN が未設定です。");
+    return { ok: false, status: 0 };
+  }
+
+  const payload = {
+    messages: [{ type: "text", text }],
+  };
+
+  const options = {
+    method: "post",
+    contentType: "application/json",
+    headers: { Authorization: "Bearer " + token },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true,
+  };
+
+  const res = UrlFetchApp.fetch(LINE_BROADCAST_URL, options);
+  const status = res.getResponseCode();
+
+  if (status !== 200) {
+    console.error("[LINE] broadcast 失敗: HTTP " + status + " " + res.getContentText());
+  }
+
+  return { ok: status === 200, status };
+}
+
+/**
+ * GAS 時間トリガーから呼ばれるエントリーポイント。
+ * 最古の未読記事を 1 件取得し、LINE に通知する。
+ * 未読記事がない場合、またはトークン未設定の場合は何もしない。
+ */
+function notifyLineArticle() {
+  const token = getLineToken();
+  if (!token) {
+    console.warn("[LINE] LINE_CHANNEL_ACCESS_TOKEN が未設定のためスキップ。");
+    return;
+  }
+
+  const sheet = getSheet();
+  const rows = sheet.getDataRange().getValues();
+  const unread = rows.slice(1).filter((row) => row[3] === "未読");
+
+  if (unread.length === 0) {
+    console.info("[LINE] 未読記事がありません。");
+    return;
+  }
+
+  const picked = unread[0];
+  const title = picked[0];
+  const url = picked[1];
+
+  const message =
+    "📖 読むべき記事があります！\n\n" +
+    "📰 " + title + "\n" +
+    "🔗 " + url + "\n\n" +
+    "残り未読: " + unread.length + " 件";
+
+  const result = sendLineMessage(message);
+  if (result.ok) {
+    console.info("[LINE] 通知送信成功: " + title);
+  }
+}
+
+/**
+ * LINE 通知用の時間トリガーを登録する。
+ * 既存のトリガーがあれば削除してから再登録する。
+ *
+ * GAS エディタから手動で実行する（1回だけ）。
+ *
+ * @param {number} [intervalHours=1] - 通知間隔（時間単位）
+ */
+function setupLineNotifyTrigger(intervalHours) {
+  const hours = intervalHours || 1;
+
+  // 既存トリガーを削除
+  removeLineNotifyTrigger();
+
+  ScriptApp.newTrigger(LINE_TRIGGER_FUNCTION)
+    .timeBased()
+    .everyHours(hours)
+    .create();
+
+  console.info("[LINE] " + hours + "時間ごとの通知トリガーを登録しました。");
+}
+
+/**
+ * LINE 通知用のトリガーを全て削除する。
+ */
+function removeLineNotifyTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  for (const trigger of triggers) {
+    if (trigger.getHandlerFunction() === LINE_TRIGGER_FUNCTION) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  }
+  console.info("[LINE] 通知トリガーを削除しました。");
 }
