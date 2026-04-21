@@ -64,6 +64,15 @@ function doPost(e) {
     const source = (data.source || "").trim() || "不明";
 
     const sheet = getSheet();
+
+    // 重複チェック: 同じURLの未読記事が既に存在する場合はスキップ
+    const rows = sheet.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][1] === url && rows[i][3] === "未読") {
+        return jsonResponse({ status: "duplicate", message: "この記事は既に登録されています" });
+      }
+    }
+
     sheet.appendRow([title, url, new Date(), "未読", "", source]);
 
     return jsonResponse({ status: "ok", message: "保存しました" });
@@ -108,6 +117,25 @@ function doGet(_e) {
     }
   }
 
+  // 記事削除: action=delete&url=... で未読記事を行ごと削除する
+  if (params.action === "delete" && params.url) {
+    try {
+      const sheet = getSheet();
+      const rows = sheet.getDataRange().getValues();
+      const targetUrl = params.url.trim();
+
+      for (let i = 1; i < rows.length; i++) {
+        if (rows[i][1] === targetUrl && rows[i][3] === "未読") {
+          sheet.deleteRow(i + 1);
+          return jsonResponse({ status: "ok", message: "記事を削除しました" });
+        }
+      }
+      return jsonResponse({ status: "notFound", message: "対象記事が見つかりません" });
+    } catch (err) {
+      return jsonResponse({ status: "error", message: err.message });
+    }
+  }
+
   try {
     const sheet = getSheet();
     const rows = sheet.getDataRange().getValues();
@@ -116,7 +144,7 @@ function doGet(_e) {
     const unread = rows.slice(1).filter((row) => row[3] === "未読");
 
     if (unread.length === 0) {
-      return jsonResponse({ status: "empty" });
+      return jsonResponse({ status: "empty", unreadCount: 0 });
     }
 
     // 一番古い（先頭の）未読記事を返す
@@ -126,6 +154,7 @@ function doGet(_e) {
       status: "ok",
       title: picked[0],
       url: picked[1],
+      unreadCount: unread.length,
     });
   } catch (err) {
     return jsonResponse({ status: "error", message: err.message });
