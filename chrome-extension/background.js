@@ -155,6 +155,12 @@ async function onAlarm() {
 
     if (data.status === "ok" && data.url) {
       showNotification(data.title || data.url, data.url);
+
+      // PC通知と同時にLINEにも通知を送信
+      const notifyLineUrl = `${gasUrl}?action=notifyLine&url=${encodeURIComponent(data.url)}`;
+      fetch(notifyLineUrl).catch((err) =>
+        console.error("[Blog-Read-Forced] LINE通知リクエスト失敗:", err)
+      );
     }
   } catch (err) {
     console.error("[Blog-Read-Forced] 記事取得に失敗しました:", err);
@@ -230,6 +236,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           message: data.title || data.url,
           contextMessage: "これはテスト通知です（既読になりません）",
         });
+
+        // テスト通知でもLINEに送信
+        const notifyLineUrl = `${gasUrl}?action=notifyLine&url=${encodeURIComponent(data.url)}`;
+        fetch(notifyLineUrl).catch((err) =>
+          console.error("[Blog-Read-Forced] LINE通知リクエスト失敗:", err)
+        );
+
         sendResponse({ success: true });
       }
     } catch (err) {

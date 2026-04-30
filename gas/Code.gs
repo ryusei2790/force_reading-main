@@ -123,6 +123,50 @@ function doGet(_e) {
     }
   }
 
+  // LINE通知: action=notifyLine&url=... で指定記事をLINEに送信する
+  if (params.action === "notifyLine" && params.url) {
+    try {
+      const token = getLineToken();
+      if (!token) {
+        return jsonResponse({ status: "error", message: "LINE_CHANNEL_ACCESS_TOKEN が未設定です" });
+      }
+
+      const sheet = getSheet();
+      const rows = sheet.getDataRange().getValues();
+      const targetUrl = params.url.trim();
+      const unreadCount = rows.slice(1).filter((row) => row[3] === "未読").length;
+
+      // 対象記事のタイトルを取得
+      let title = targetUrl;
+      for (let i = 1; i < rows.length; i++) {
+        if (rows[i][1] === targetUrl) {
+          title = rows[i][0];
+          break;
+        }
+      }
+
+      // 既読リンクを生成
+      const gasUrl = ScriptApp.getService().getUrl();
+      const markReadLink = gasUrl + "?action=markRead&url=" + encodeURIComponent(targetUrl);
+
+      const message =
+        "📖 読むべき記事があります！\n\n" +
+        "📰 " + title + "\n" +
+        "🔗 " + targetUrl + "\n\n" +
+        "残り未読: " + unreadCount + " 件\n\n" +
+        "✅ 既読にする\n" + markReadLink;
+
+      const result = sendLineMessage(message);
+      if (result.ok) {
+        return jsonResponse({ status: "ok", message: "LINE通知を送信しました" });
+      } else {
+        return jsonResponse({ status: "error", message: "LINE送信失敗: HTTP " + result.status });
+      }
+    } catch (err) {
+      return jsonResponse({ status: "error", message: err.message });
+    }
+  }
+
   // 記事削除: action=delete&url=... で未読記事を行ごと削除する
   if (params.action === "delete" && params.url) {
     try {
@@ -238,11 +282,16 @@ function notifyLineArticle() {
   const title = picked[0];
   const url = picked[1];
 
+  // 自GASのWebアプリURLを取得し、既読リンクを生成する
+  const gasUrl = ScriptApp.getService().getUrl();
+  const markReadLink = gasUrl + "?action=markRead&url=" + encodeURIComponent(url);
+
   const message =
     "📖 読むべき記事があります！\n\n" +
     "📰 " + title + "\n" +
     "🔗 " + url + "\n\n" +
-    "残り未読: " + unread.length + " 件";
+    "残り未読: " + unread.length + " 件\n\n" +
+    "✅ 既読にする\n" + markReadLink;
 
   const result = sendLineMessage(message);
   if (result.ok) {
