@@ -36,6 +36,16 @@ iPhone で見つけた記事をワンタップで登録。あとは何もしな�
 
 ---
 
+## 📸 スクリーンショット
+
+| Chrome 拡張ポップアップ | デスクトップ通知 | LINE 通知 |
+|:--:|:--:|:--:|
+| ![popup](docs/images/popup.png) | ![notification](docs/images/notification.png) | ![line](docs/images/line.png) |
+
+<!-- スクリーンショットを docs/images/ に配置してください -->
+
+---
+
 ## 🛠 技術スタック
 
 | カテゴリ | 技術 |
@@ -241,6 +251,20 @@ Service Worker が停止している可能性が高いです。上記の「通�
 
 ---
 
+## 🔌 API エンドポイント
+
+GAS ウェブアプリが提供する HTTP API:
+
+| メソッド | パラメータ | 説明 |
+|---------|----------|------|
+| `POST` | `{url, title?, source?}` | 記事を登録（重複チェック付き） |
+| `GET` | なし | 最古の未読記事を1件取得 |
+| `GET` | `?action=markRead&url=...` | 指定記事を既読に更新 |
+| `GET` | `?action=delete&url=...` | 指定記事を削除 |
+| `GET` | `?action=notifyLine&url=...` | 指定記事を LINE に通知 |
+
+---
+
 ## 📁 ディレクトリ構成
 
 ```
@@ -248,14 +272,16 @@ force_reading/
 ├── docs/
 │   ├── requirements.md      # 要件定義
 │   ├── tech-stack.md        # 技術選定
-│   └── architecture.md      # システム構成・仕様
+│   ├── architecture.md      # システム構成・仕様
+│   └── images/              # スクリーンショット
 ├── gas/
 │   └── Code.gs              # GAS バックエンド（doPost / doGet / LINE通知）
 ├── chrome-extension/
 │   ├── manifest.json        # 拡張の設定・権限（Manifest V3）
-│   ├── background.js        # Service Worker（アラーム・Chrome通知）
+│   ├── background.js        # Service Worker（アラーム・Chrome / LINE通知）
 │   ├── popup.html           # ツールバーの UI
-│   └── popup.js             # popup のロジック
+│   ├── popup.js             # popup のロジック
+│   └── icon*.png            # 拡張アイコン（16 / 48 / 128px）
 └── README.md
 ```
 

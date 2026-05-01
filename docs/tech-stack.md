@@ -12,11 +12,12 @@
 
 | レイヤー | 技術 | バージョン | 役割 |
 |---------|------|-----------|------|
-| バックエンド | Google Apps Script (GAS) | - | HTTPエンドポイント・スプレッドシート操作 |
+| バックエンド | Google Apps Script (GAS) | - | HTTPエンドポイント・スプレッドシート操作・LINEへの通知送信 |
 | データベース | Google スプレッドシート | - | 記事データの永続保存 |
 | ブラウザ拡張 | Chrome Extensions (Manifest V3) | MV3 | 通知・タブ操作・記事登録UI |
 | 言語 | JavaScript (ES2020+) | - | GAS・Chrome拡張ともに共通言語 |
 | モバイル連携 | iPhoneショートカット | iOS 16+ | URLをGASへPOSTする自動化 |
+| LINE通知 | LINE Messaging API | - | スマホへの記事通知・既読リンクの配信 |
 
 ---
 
@@ -31,13 +32,17 @@ Googleが提供するサーバーレスのJavaScript実行環境。Googleドラ�
 - Googleアカウントだけで無料で使える
 - `doPost()` / `doGet()` でWebエンドポイントを公開できる（サーバー不要）
 - `SpreadsheetApp` でスプレッドシートを直接操作できる
+- 時間トリガーでLINE通知を定期実行できる
 - デプロイするだけでURLが発行され、外部からHTTPリクエストを受け取れる
 
 **このプロジェクトでやること**
+
 | 関数 | 処理 |
 |------|------|
 | `doPost()` | iPhoneやChrome拡張からの記事URLを受け取り、スプレッドシートに保存 |
-| `doGet()` | スプレッドシートから未読記事をランダムで1件取得してJSONで返す |
+| `doGet()` | 未読記事の取得 / 既読更新（markRead）/ 記事削除（delete）をアクションで切り替え |
+| `notifyLineArticle()` | 最古の未読記事を取得し、既読リンク付きでLINEに通知（時間トリガーから呼ばれる） |
+| `setupLineNotifyTrigger()` | LINE通知の時間トリガーを登録（GASエディタから1回だけ手動実行） |
 
 ---
 
@@ -76,19 +81,42 @@ Chromeブラウザの機能を拡張する公式の仕組み。JS/HTML/CSSで実
 
 | API | 用途 |
 |-----|------|
-| `chrome.alarms` | 毎日12時にアラームを設定・発火 |
+| `chrome.alarms` | 設定間隔（デフォルト60分）でアラームを登録・発火 |
 | `chrome.notifications` | デスクトップ通知の表示 |
 | `chrome.tabs` | 通知クリック時に記事URLを新タブで開く |
-| `chrome.storage.local` | GASのWebアプリURLを拡張内に保存 |
+| `chrome.storage.local` | GAS URL・通知間隔・最終通知日時を拡張内に保存 |
+| `chrome.runtime.sendMessage` | popupからbackground.jsへテスト通知を依頼 |
 
 **ファイル構成**
 
 | ファイル | 役割 |
 |---------|------|
 | `manifest.json` | 拡張の設定・権限定義 |
-| `background.js` | Service Worker。アラーム登録・通知表示 |
-| `popup.html` | ツールバーのUI（記事登録ボタン） |
-| `popup.js` | popupのロジック（GASへPOST） |
+| `background.js` | Service Worker。アラーム登録・通知表示・既読更新 |
+| `popup.html` | ツールバーのUI |
+| `popup.js` | 記事登録・スキップ・設定変更・テスト通知のロジック |
+
+---
+
+### LINE Messaging API
+
+**何者か**
+LINEが提供するBot向けAPIで、公式アカウントからメッセージを送信できる。
+
+**選定理由**
+- スマホで一番見るアプリがLINEなので通知に気づきやすい
+- broadcastで友だち全員（＝自分）に送信する最小構成で使える
+- GASから `UrlFetchApp.fetch()` で直接叩けるのでサーバー不要
+- 月1000通まで無料（個人利用なら超過しない）
+
+**このプロジェクトでの使い方**
+
+| 項目 | 内容 |
+|------|------|
+| エンドポイント | `POST https://api.line.me/v2/bot/message/broadcast` |
+| 認証 | チャネルアクセストークン（GASスクリプトプロパティで管理） |
+| メッセージ形式 | テキスト（記事タイトル・URL・残り未読件数・既読リンクを含む） |
+| 既読リンクの仕組み | GASの `doGet(?action=markRead&url=...)` URLをメッセージに含める |
 
 ---
 
@@ -109,7 +137,7 @@ GASおよびChrome拡張の実装言語。
 | `async/await` | GASへのfetchを非同期処理 |
 | `fetch()` | Chrome拡張からGASへHTTPリクエスト |
 | `JSON.stringify/parse` | データのシリアライズ・デシリアライズ |
-| アロー関数 | Chrome拡張のコールバック処理 |
+| `encodeURIComponent()` | 既読リンクのURL生成時にArticle URLをエンコード |
 
 ---
 
@@ -143,20 +171,29 @@ iOS標準搭載の自動化ツール。アプリ不要でHTTPリクエストな�
   共有 → POST(url, source)
          ↓
 [GAS doPost()]
-  URLをスプレッドシートに保存
+  重複チェック → URLをスプレッドシートに保存
          ↓
 [Google スプレッドシート]
   タイトル | URL | 日時 | ステータス | ソース
-         ↑
-[GAS doGet()]
-  未読をランダムで1件取得 → JSON返却
-         ↑
-[Chrome拡張 background.js]
-  毎日12時にGETリクエスト → 通知表示
-         ↓
-[デスクトップ通知]
-  クリック → chrome.tabs.create() → 記事を新タブで開く
+         ↑                    ↑
+[GAS doGet()]            [GAS doGet(?action=markRead)]
+  最古の未読1件取得            該当URLを既読に更新
+  ↑                               ↑
+[Chrome拡張 background.js]   [Chrome通知クリック / LINEの既読リンクタップ]
+  設定間隔でGETリクエスト
+  → 通知表示
+  → クリックで記事を開く + markRead
+
+[GAS 時間トリガー]
+  → notifyLineArticle()
+       → 最古の未読1件取得
+       → markReadリンクを生成
+       → LINE broadcast送信
+            ↓
+       [スマホのLINE]
+         記事URL + 既読リンク
 
 [Chrome拡張 popup.js]
   現在タブのURL/タイトル → POST → GAS doPost()
+  スキップボタン → GAS doGet(?action=delete) → 記事削除
 ```
