@@ -62,27 +62,60 @@ iPhone で見つけた記事をワンタップで登録。あとは何もしな�
 
 ```mermaid
 flowchart TD
-    subgraph 登録
-        A[iPhone Safari/Chrome] -->|共有ボタン| B[iOS ショートカット]
-        C[Chrome 拡張 popup] -->|クリック| D[現在タブ取得]
-        B -->|POST url,source| GAS
-        D -->|POST url,title,source| GAS
+    %% ── 登録フロー ──────────────────────────
+    subgraph 登録["📥 登録フロー"]
+        IP[iPhone Safari/Chrome] -->|共有ボタン| SC[iOS ショートカット]
+        SC -->|POST url, source| GAS
+        EX[Chrome 拡張ポップアップ] -->|登録ボタン| TAB[現在タブの<br/>URL・タイトル取得]
+        TAB -->|POST url, title, source| GAS
     end
 
-    subgraph バックエンド
-        GAS[Google Apps Script\ndoPost / doGet] --> SS[(Google\nスプレッドシート)]
+    %% ── バックエンド ────────────────────────
+    subgraph バックエンド["🗄 バックエンド GAS"]
+        GAS["Google Apps Script<br/>doPost / doGet"]
+        GAS <-->|読み書き| SS[(Google<br/>スプレッドシート<br/>articles)]
     end
 
-    subgraph 通知
-        BG[Chrome background.js\nService Worker] -->|GET 未読1件| GAS
-        BG -->|chrome.notifications| NOTIF[デスクトップ通知]
-        NOTIF -->|クリック| TAB[記事を新タブで開く]
-
-        BG -->|GET ?action=notifyLine| GAS
+    %% ── 定期通知フロー（メイン）─────────────
+    subgraph 通知["🔔 定期通知フロー"]
+        BG["Chrome background.js<br/>Service Worker<br/>chrome.alarms"]
+        BG -->|GET 最古未読1件| GAS
+        BG -->|chrome.notifications| PCNOTIF[💻 PC デスクトップ通知]
+        BG -->|GET ?action=notifyLine&url=...<br/>※PC通知と同時送信| GAS
         GAS -->|broadcast| LINE[LINE 公式アカウント]
-        LINE -->|メッセージ| PHONE[スマホの LINE]
+        LINE -->|プッシュ通知| PHONE[📱 スマホ LINE]
+
+        PCNOTIF -->|クリック| OPENTAB[記事を新タブで開く]
+        OPENTAB -->|GET ?action=markRead| GAS
+        PHONE -.->|既読リンクをタップ| GAS
     end
+
+    %% ── ポップアップUI（操作系）──────────────
+    subgraph 操作["🎛 ポップアップ UI 操作"]
+        EX -->|表示時| GETONE[GET 最古未読1件]
+        GETONE --> GAS
+        EX -->|スキップボタン| DEL[GET ?action=delete]
+        DEL --> GAS
+        EX -->|テスト通知ボタン| BG
+    end
+
+    classDef gas fill:#fef3c7,stroke:#f59e0b,color:#92400e
+    classDef chrome fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef line fill:#d1fae5,stroke:#10b981,color:#065f46
+    classDef storage fill:#f3e8ff,stroke:#a855f7,color:#581c87
+    class GAS gas
+    class BG,EX,TAB,PCNOTIF,OPENTAB,GETONE,DEL chrome
+    class LINE,PHONE line
+    class SS storage
 ```
+
+### 図の読み方
+
+- **登録フロー**：iPhone のショートカット or Chrome 拡張のボタンから、`doPost` で記事を保存。
+- **定期通知フロー**：Chrome 拡張の `chrome.alarms` で発火し、未読1件取得 → **PC通知と LINE 通知を同時送信** → クリックで記事を開いて自動既読化。
+- **ポップアップ UI**：ポップアップ表示時に最古未読をカード表示。「スキップ」で記事削除、「テスト通知」で background.js にメッセージを送って疑似発火。
+
+> ⚠️ LINE 通知は GAS の時間トリガーではなく **Chrome 拡張の `chrome.alarms` 駆動** です。Chrome を起動していないと通知は飛びません。
 
 ---
 
