@@ -90,22 +90,52 @@ function doPost(e) {
 /**
  * GET リクエストを処理する。
  *
- * action=markRead&url=... の場合は既読に更新する。
- * それ以外は未読記事をランダムで 1 件返す。
+ * action=markRead&url=...    → HTML 確認ページを返す（副作用なし）
+ * action=confirmRead&url=... → 実際にスプレッドシートを既読に更新（HTML結果ページを返す）
+ * action=delete&url=...      → 未読記事を行ごと削除
+ * action=notifyLine&url=...  → 指定記事を LINE に通知
+ * それ以外                    → 最古の未読記事を 1 件返す
  *
  * レスポンス (JSON):
- *   - status: "ok"    → title, url を含む（記事取得時）
- *   - status: "ok"    → message を含む（既読更新時）
- *   - status: "empty" → 未読記事なし
+ *   - status: "ok"       → title, url を含む（記事取得時）
+ *   - status: "empty"    → 未読記事なし
  *   - status: "notFound" → 対象URLが見つからない
  *
  * @param {GoogleAppsScript.Events.DoGet} _e
- * @returns {GoogleAppsScript.Content.TextOutput}
+ * @returns {GoogleAppsScript.Content.TextOutput|GoogleAppsScript.HTML.HtmlOutput}
  */
 function doGet(_e) {
   const params = _e.parameter || {};
 
+  // markRead: HTML 確認ページを返すだけ（副作用なし）
+  // ── LINE のリンクプレビュークローラに自動 fetch されても既読化されないように、
+  //    GET の副作用を排除し、ユーザーがボタンをクリックして初めて confirmRead が呼ばれる
   if (params.action === "markRead" && params.url) {
+    try {
+      const targetUrl = params.url.trim();
+      const sheet = getSheet();
+      const rows = sheet.getDataRange().getValues();
+
+      // 対象記事のタイトルとステータスを取得
+      let title = targetUrl;
+      let alreadyRead = true; // デフォルトは「見つからない or 既読」扱い
+      for (let i = 1; i < rows.length; i++) {
+        if (rows[i][1] === targetUrl) {
+          title = rows[i][0] || targetUrl;
+          alreadyRead = rows[i][3] !== "未読";
+          break;
+        }
+      }
+
+      return renderConfirmReadPage(targetUrl, title, alreadyRead);
+    } catch (err) {
+      return renderErrorPage(err.message);
+    }
+  }
+
+  // confirmRead: 実際にスプレッドシートを既読に更新する（旧 markRead の処理）
+  // ── ユーザーが確認ページの「✅ 既読にする」ボタンをクリックした時のみ呼ばれる
+  if (params.action === "confirmRead" && params.url) {
     try {
       const sheet = getSheet();
       const rows = sheet.getDataRange().getValues();
@@ -114,12 +144,12 @@ function doGet(_e) {
       for (let i = 1; i < rows.length; i++) {
         if (rows[i][1] === targetUrl && rows[i][3] === "未読") {
           sheet.getRange(i + 1, 4).setValue("既読");
-          return jsonResponse({ status: "ok", message: "既読にしました" });
+          return renderResultPage("✅ 既読にしました", rows[i][0] || targetUrl, true);
         }
       }
-      return jsonResponse({ status: "notFound", message: "対象記事が見つかりません" });
+      return renderResultPage("対象記事が見つかりません", targetUrl, false);
     } catch (err) {
-      return jsonResponse({ status: "error", message: err.message });
+      return renderErrorPage(err.message);
     }
   }
 
@@ -332,4 +362,130 @@ function removeLineNotifyTrigger() {
     }
   }
   console.info("[LINE] 通知トリガーを削除しました。");
+}
+
+// ── 既読化 HTML ページ ─────────────────────────────────────
+
+/**
+ * HTML 文字列内のメタ文字を HTML エスケープする。
+ * XSS を防ぐため、ユーザー入力（URL・タイトル）を HTML に埋め込む際に使う。
+ *
+ * @param {string} str
+ * @returns {string}
+ */
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * 既読化の確認ページ（副作用なし）を HTML として返す。
+ *
+ * - LINE 等のリンクプレビュークローラが GET しても既読化されない
+ * - ユーザーが「✅ 既読にする」ボタンをクリックして初めて confirmRead が呼ばれる
+ *
+ * @param {string} targetUrl - 既読化対象の記事 URL
+ * @param {string} title     - 表示用タイトル
+ * @param {boolean} alreadyRead - 既に既読 / 未登録の場合 true
+ * @returns {GoogleAppsScript.HTML.HtmlOutput}
+ */
+function renderConfirmReadPage(targetUrl, title, alreadyRead) {
+  const gasUrl = ScriptApp.getService().getUrl();
+  const confirmHref = gasUrl + "?action=confirmRead&url=" + encodeURIComponent(targetUrl);
+  const safeTitle = escapeHtml(title);
+  const safeUrl = escapeHtml(targetUrl);
+  const safeConfirmHref = escapeHtml(confirmHref);
+
+  const stateBlock = alreadyRead
+    ? '<p class="muted">この記事は既に既読、または登録されていません。</p>'
+    : '<a href="' + safeConfirmHref +
+      '" class="btn-confirm" rel="nofollow">✅ 既読にする</a>';
+
+  const html =
+    '<!DOCTYPE html>' +
+    '<html lang="ja"><head>' +
+    '<meta charset="UTF-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<meta name="robots" content="noindex, nofollow">' +
+    '<title>既読にしますか？</title>' +
+    '<style>' +
+    'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;' +
+    'background:#f8fafc;margin:0;padding:24px;color:#1e293b;}' +
+    '.card{max-width:520px;margin:40px auto;background:#fff;border-radius:12px;' +
+    'padding:32px 24px;box-shadow:0 4px 12px rgba(0,0,0,.08);}' +
+    'h1{font-size:18px;margin:0 0 16px;}' +
+    'h2{font-size:16px;margin:0 0 8px;color:#0f172a;line-height:1.5;}' +
+    '.url{font-size:13px;color:#64748b;word-break:break-all;margin-bottom:24px;}' +
+    '.btn-confirm{display:block;background:#10b981;color:#fff;text-align:center;' +
+    'padding:14px 16px;border-radius:8px;text-decoration:none;font-weight:600;' +
+    'font-size:16px;margin-bottom:12px;}' +
+    '.btn-confirm:active{background:#059669;}' +
+    '.btn-cancel{display:block;background:#e2e8f0;color:#334155;text-align:center;' +
+    'padding:12px 16px;border-radius:8px;border:none;width:100%;font-size:14px;' +
+    'cursor:pointer;}' +
+    '.muted{color:#94a3b8;text-align:center;padding:16px 0;}' +
+    '</style></head><body>' +
+    '<div class="card">' +
+    '<h1>📖 この記事を既読にしますか？</h1>' +
+    '<h2>' + safeTitle + '</h2>' +
+    '<div class="url">' + safeUrl + '</div>' +
+    stateBlock +
+    '<button class="btn-cancel" onclick="window.close()">キャンセル</button>' +
+    '</div></body></html>';
+
+  return HtmlService.createHtmlOutput(html)
+    .addMetaTag("viewport", "width=device-width, initial-scale=1");
+}
+
+/**
+ * 既読化の結果ページ（成功 / 失敗）を HTML として返す。
+ *
+ * @param {string} headline - 表示する見出し（例：「✅ 既読にしました」）
+ * @param {string} title    - 記事タイトル
+ * @param {boolean} success - 成功時 true
+ * @returns {GoogleAppsScript.HTML.HtmlOutput}
+ */
+function renderResultPage(headline, title, success) {
+  const safeHeadline = escapeHtml(headline);
+  const safeTitle = escapeHtml(title);
+  const accent = success ? "#10b981" : "#f59e0b";
+
+  const html =
+    '<!DOCTYPE html>' +
+    '<html lang="ja"><head>' +
+    '<meta charset="UTF-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<meta name="robots" content="noindex, nofollow">' +
+    '<title>結果</title>' +
+    '<style>' +
+    'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;' +
+    'background:#f8fafc;margin:0;padding:24px;color:#1e293b;}' +
+    '.card{max-width:520px;margin:40px auto;background:#fff;border-radius:12px;' +
+    'padding:32px 24px;box-shadow:0 4px 12px rgba(0,0,0,.08);text-align:center;}' +
+    'h1{font-size:20px;margin:0 0 16px;color:' + accent + ';}' +
+    'h2{font-size:15px;margin:0 0 24px;color:#475569;line-height:1.5;}' +
+    '.btn-close{background:#e2e8f0;color:#334155;padding:12px 16px;border-radius:8px;' +
+    'border:none;font-size:14px;cursor:pointer;width:100%;}' +
+    '</style></head><body>' +
+    '<div class="card">' +
+    '<h1>' + safeHeadline + '</h1>' +
+    '<h2>' + safeTitle + '</h2>' +
+    '<button class="btn-close" onclick="window.close()">閉じる</button>' +
+    '</div></body></html>';
+
+  return HtmlService.createHtmlOutput(html);
+}
+
+/**
+ * エラーページを HTML として返す。
+ *
+ * @param {string} message - エラーメッセージ
+ * @returns {GoogleAppsScript.HTML.HtmlOutput}
+ */
+function renderErrorPage(message) {
+  return renderResultPage("⚠️ エラーが発生しました", message, false);
 }

@@ -271,8 +271,12 @@ chrome.notifications.onClicked.addListener(async (notificationId) => {
     chrome.storage.local.remove("pendingArticleUrl");
 
     // GAS に既読更新リクエストを送信
+    // ── confirmRead を直接叩く理由：
+    //    PC通知のクリックは「ユーザーの明示的な操作」なので確認ページを挟む必要がない。
+    //    また、markRead は HTML 確認ページを返すだけで副作用がないため、ここで markRead を
+    //    叩いてもスプレッドシートは既読化されない（バグ再発を防ぐため confirmRead を使う）
     if (gasUrl) {
-      const markUrl = `${gasUrl}?action=markRead&url=${encodeURIComponent(url)}`;
+      const markUrl = `${gasUrl}?action=confirmRead&url=${encodeURIComponent(url)}`;
       fetch(markUrl).catch((err) =>
         console.error("[Blog-Read-Forced] 既読更新に失敗しました:", err)
       );
